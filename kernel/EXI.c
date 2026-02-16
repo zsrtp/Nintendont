@@ -743,6 +743,8 @@ void EXIUpdateRegistersNEW( void )
 					}
 
 					EXICommand[chn] = 0;
+					if (chn == 0)
+						tpgz_pending_read = 0;
 				}
 
 				write32( EXI_CMD_1, ret );
@@ -801,7 +803,7 @@ void EXIUpdateRegistersNEW( void )
 
 				// Intercept TPGZ commands before normal device dispatch.
 				// Check magic prefix on writes; use pending flag for reads.
-				if (mode == EXI_WRITE && len >= 4)
+				if (chn == 0 && mode == EXI_WRITE && len >= 4)
 				{
 					sync_before_read(ptr, 4);
 					if ((*(u32*)ptr >> 16) == TPGZ_MAGIC)
@@ -812,7 +814,7 @@ void EXIUpdateRegistersNEW( void )
 						break;
 					}
 				}
-				else if (mode != EXI_WRITE && tpgz_pending_read)
+				else if (chn == 0 && mode != EXI_WRITE && tpgz_pending_read)
 				{
 					EXIDeviceTPGZ(ptr, len, mode);
 					if (chn <= 2)
