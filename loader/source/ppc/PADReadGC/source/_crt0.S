@@ -2,11 +2,13 @@
 	# full list of the functions we can jump to
 	.extern PADRead
 	.extern KeyboardRead
+	.extern DoGameExit
 
 	.globl __start
 __start:
 	b PADRead
 	b KeyboardRead
+	b DoGameExit
 
 # just some helper functions
 	.globl disableIRQs

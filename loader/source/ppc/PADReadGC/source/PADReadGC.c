@@ -1526,6 +1526,31 @@ DoShutdown:
 	while(1) ;
 }
 
+void DoGameExit(void)
+{
+	/* disable interrupts */
+	disableIRQs();
+	/* stop audio dma */
+	_dspReg[27] = (_dspReg[27]&~0x8000);
+	/* reset status 1 (DoExit) */
+	*RESET_STATUS = 0x1DEA;
+	while(*RESET_STATUS == 0x1DEA) ;
+	/* disable dcache and icache */
+	disableCaches();
+	/* disable memory protection */
+	_memReg[15] = 0xF;
+	_memReg[16] = 0;
+	_memReg[8] = 0xFF;
+	/* load in stub */
+	vu32 *dest = (vu32*)0x80004000;
+	vu32 *src = (vu32*)0x93011810;
+	u32 size = 0x1800;
+	do { *dest++ = *src++; } while((size-=4) > 0);
+	/* Allow all IOS IRQs again */
+	*(vu32*)0xCD800004 = 0x36;
+	/* jump to it */
+	bootStub();
+}
 
 /* Functions for PSO Keyboard */
 static void kbDoSpecial(u8 *in, u8 *out)
