@@ -93,6 +93,15 @@ FRESULT f_mkdir_char(const char* path)
 		return FR_INVALID_NAME;
 	return f_mkdir(tmpwchar.u16);
 }
+
+#if _FS_MINIMIZE < 1
+FRESULT f_unlink_char(const char* path)
+{
+	if (!char_to_wchar(path))
+		return FR_INVALID_NAME;
+	return f_unlink(tmpwchar.u16);
+}
+#endif /* _FS_MINIMIZE < 1 */
 #endif /* !_FS_READONLY */
 
 #if _FS_RPATH >= 1

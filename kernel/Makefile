@@ -34,7 +34,7 @@ LDFLAGS	:= -nostartfiles -nodefaultlibs -mbig-endian -Wl,--gc-sections,-T,kernel
 TARGET	:= kernel.elf
 OBJECTS	:= start.o common.o alloc.o GCAM.o JVSIO.o JVSIOMessage.o FST.o DI.o RealDI.o \
 	   Patch.o PatchTimers.o TRI.o PatchWidescreen.o ISO.o Stream.o adp.o \
-	   EXI.o SRAM.o GCNCard.o SI.o HID.o diskio.o Config.o utils_asm.o ES.o NAND.o \
+	   EXI.o SRAM.o GCNCard.o TPGZ.o SI.o HID.o diskio.o Config.o utils_asm.o ES.o NAND.o \
 	   main.o syscalls.o ReadSpeed.o vsprintf.o string.o prs.o \
 	   SDI.o usb.o usbstorage.o wdvd.o sock.o
 LIBS	:= ../fatfs/libfatfs-arm.a be/libc.a be/libgcc.a
@@ -43,9 +43,15 @@ ZIPFILE	:= ../loader/data/kernel.zip
 # Bluetooth stack
 OBJECTS	+= lwbt/bte.o lwbt/btmemb.o lwbt/btmemr.o lwbt/btpbuf.o lwbt/hci.o lwbt/l2cap.o lwbt/physbusif.o BT.o
 
-.PHONY: FORCE
+.PHONY: FORCE asm-headers codehandler-headers
 
-all: $(TARGET)
+all: asm-headers codehandler-headers $(TARGET)
+
+asm-headers:
+	@$(MAKE) -C asm DEVKITPPC=$(DEVKITPPC)
+
+codehandler-headers:
+	@$(MAKE) -C ../codehandler DEVKITPPC=$(DEVKITPPC)
 
 -include $(OBJECTS:.o=.d)
 

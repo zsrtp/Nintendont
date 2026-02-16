@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "Config.h"
 #include "debug.h"
 #include "SRAM.h"
+#include "TPGZ.h"
 
 #include "ff_utf8.h"
 
@@ -735,7 +736,6 @@ void EXIUpdateRegistersNEW( void )
 							break;
 #endif /* GCNCARD_ENABLE_SLOT_B */
 
-						case EXI_DEV_AD16:
 						default:
 							// Unsupported device.
 							ret = 0;
@@ -796,8 +796,30 @@ void EXIUpdateRegistersNEW( void )
 				ptr	= (u8*)P2C(read32(EXI_CMD_1));
 				len	= command& 0xFFFF;
 				mode	= (command >> 16) & 0xF;
-				
+
 				//dbgprintf("EXIDMA( %u, %p, %u, %u )\r\n", chn, ptr, len, mode );
+
+				// Intercept TPGZ commands before normal device dispatch.
+				// Check magic prefix on writes; use pending flag for reads.
+				if (mode == EXI_WRITE && len >= 4)
+				{
+					sync_before_read(ptr, 4);
+					if ((*(u32*)ptr >> 16) == TPGZ_MAGIC)
+					{
+						EXIDeviceTPGZ(ptr, len, mode);
+						if (chn <= 2)
+							EXICommand[chn] = 0;
+						break;
+					}
+				}
+				else if (mode != EXI_WRITE && tpgz_pending_read)
+				{
+					EXIDeviceTPGZ(ptr, len, mode);
+					if (chn <= 2)
+						EXICommand[chn] = 0;
+					break;
+				}
+
 				switch (EXI_DEVICE_NUMBER(chn, EXIDeviceSelect[chn&3]))
 				{
 					case EXI_DEV_MEMCARD_A:
