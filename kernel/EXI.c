@@ -816,10 +816,14 @@ void EXIUpdateRegistersNEW( void )
 				}
 				else if (chn == 0 && mode != EXI_WRITE && tpgz_pending_read)
 				{
-					EXIDeviceTPGZ(ptr, len, mode);
-					if (chn <= 2)
-						EXICommand[chn] = 0;
-					break;
+					sync_before_read(ptr, 4);
+					if ((*(u32*)ptr >> 16) == TPGZ_MAGIC)
+					{
+						EXIDeviceTPGZ(ptr, len, mode);
+						if (chn <= 2)
+							EXICommand[chn] = 0;
+						break;
+					}
 				}
 
 				switch (EXI_DEVICE_NUMBER(chn, EXIDeviceSelect[chn&3]))

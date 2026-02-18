@@ -32,6 +32,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "HID.h"
 #include "EXI.h"
 #include "sock.h"
+#include "net.h"
 #include "GCNCard.h"
 #include "debug.h"
 #include "GCAM.h"
@@ -254,6 +255,8 @@ int _main( int argc, char *argv[] )
 
 	PatchInit();
 
+	NCDInit();
+	NetListenerStart();
 	SOCKInit();
 //Tell PPC side we are ready!
 	cc_ahbMemFlush(1);
