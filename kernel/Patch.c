@@ -1656,10 +1656,7 @@ void DoPatches( char *Buffer, u32 Length, u32 DiscOffset )
 			IsN64Emu = 1;
 		}
 	}
-	if (TITLE_ID == 0x475A32) // "GZ2" - Twilight Princess GCN (all regions)
-		DisableEXIPatch = false;
-	else
-		DisableEXIPatch = (TRIGame == TRI_NONE && ConfigGetConfig(NIN_CFG_MEMCARDEMU) == false);
+	DisableEXIPatch = (TRIGame == TRI_NONE && ConfigGetConfig(NIN_CFG_MEMCARDEMU) == false);
 	DisableSIPatch = (!IsWiiU() && TRIGame == TRI_NONE && ConfigGetConfig(NIN_CFG_NATIVE_SI));
 
 	bool PatchWide = ConfigGetConfig(NIN_CFG_FORCE_WIDE);

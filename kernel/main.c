@@ -226,6 +226,9 @@ int _main( int argc, char *argv[] )
 	memset32((void*)RESET_STATUS, 0, 0x20);
 	sync_after_write((void*)RESET_STATUS, 0x20);
 
+	write32(UMBRA_SIGNATURE, UMBRA_SIGNATURE_MAGIC);
+	sync_after_write((void*)UMBRA_SIGNATURE, 0x20);
+
 	memset32((void*)0x13003100, 0, 0x30);
 	sync_after_write((void*)0x13003100, 0x30);
 	memset32((void*)0x13160000, 0, 0x20);

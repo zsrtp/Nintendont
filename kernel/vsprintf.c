@@ -301,7 +301,7 @@ int dbgprintf( const char *fmt, ...)
 {
 	va_list args;
 
-	if ( (*(vu32*)(0xd800070) & 1) == 0)
+	if ( !ConfigGetConfig(NIN_CFG_LOG) )
 		return -1;
 	
 	//char *buffer = (char*)heap_alloc_aligned( 0, 2048, 32 );	
@@ -335,7 +335,7 @@ int dbgprintf( const char *fmt, ...)
 		}
 	}
 
-	if( !IsWiiU() ) // usbgecko?
+	if( !IsWiiU() )
 		svc_write(buffer);
 
 	//heap_free( 0, buffer );

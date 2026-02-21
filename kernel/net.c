@@ -1,5 +1,5 @@
 /* kernel/net.c
- * IOS socket wrappers for TPGZ networking.
+ * IOS socket wrappers for UMBRA networking.
  * Based on Slippi Nintendont and libogc network_wii.c.
  */
 
@@ -27,11 +27,11 @@ int NCDInit(void)
 	s32 res;
 	int i;
 
-	dbgprintf("TPGZ NET: NCDInit()\r\n");
+	dbgprintf("UMBRA NET: NCDInit()\r\n");
 
 	/* NWC24 startup - required to bring up the WiFi interface */
 	s32 kd_fd = IOS_Open(kd_name, 0);
-	dbgprintf("TPGZ NET: kd_fd: %d\r\n", kd_fd);
+	dbgprintf("UMBRA NET: kd_fd: %d\r\n", kd_fd);
 	if (kd_fd >= 0)
 	{
 		void *nwc_buf = heap_alloc_aligned(0, 32, 32);
@@ -41,10 +41,10 @@ int NCDInit(void)
 		for (i = 0; i < 5; i++)
 		{
 			res = IOS_Ioctl(kd_fd, IOCTL_NWC24_STARTUP, 0, 0, nwc_buf, 32);
-			dbgprintf("TPGZ NET: NWC24_STARTUP[%d]: %d\r\n", i, res);
+			dbgprintf("UMBRA NET: NWC24_STARTUP[%d]: %d\r\n", i, res);
 			s32 nwc_res;
 			memcpy(&nwc_res, nwc_buf, sizeof(s32));
-			dbgprintf("TPGZ NET: NWC24 result: %d\r\n", nwc_res);
+			dbgprintf("UMBRA NET: NWC24 result: %d\r\n", nwc_res);
 			if (nwc_res != -29)
 				break;
 			mdelay(200);
@@ -55,12 +55,12 @@ int NCDInit(void)
 	}
 	else
 	{
-		dbgprintf("TPGZ NET: failed to open kd: %d\r\n", kd_fd);
+		dbgprintf("UMBRA NET: failed to open kd: %d\r\n", kd_fd);
 	}
 
 	/* Open socket driver */
 	top_fd = IOS_Open(top_name, 0);
-	dbgprintf("TPGZ NET: top_fd: %d\r\n", top_fd);
+	dbgprintf("UMBRA NET: top_fd: %d\r\n", top_fd);
 	if (top_fd < 0)
 	{
 		net_init_err = top_fd;
@@ -68,27 +68,27 @@ int NCDInit(void)
 	}
 
 	res = IOS_Ioctl(top_fd, IOCTL_SO_STARTUP, 0, 0, 0, 0);
-	dbgprintf("TPGZ NET: SO_STARTUP: %d\r\n", res);
+	dbgprintf("UMBRA NET: SO_STARTUP: %d\r\n", res);
 
 	/* Wait for the network interface to come up (poll for valid IP) */
 	u32 ip = 0;
 	for (i = 0; i < 10; i++)
 	{
 		ip = IOS_Ioctl(top_fd, IOCTL_SO_GETHOSTID, 0, 0, 0, 0);
-		dbgprintf("TPGZ NET: GETHOSTID[%d]: 0x%08x\r\n", i, ip);
+		dbgprintf("UMBRA NET: GETHOSTID[%d]: 0x%08x\r\n", i, ip);
 		if (ip != 0)
 			break;
 		mdelay(500);
 	}
 
-	dbgprintf("TPGZ NET: IP: %d.%d.%d.%d\r\n",
+	dbgprintf("UMBRA NET: IP: %d.%d.%d.%d\r\n",
 		(ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
 		(ip >> 8) & 0xFF, ip & 0xFF);
 
 	if (ip == 0)
 	{
 		net_init_err = -39;
-		dbgprintf("TPGZ NET: no IP after retries, WiFi not connected?\r\n");
+		dbgprintf("UMBRA NET: no IP after retries, WiFi not connected?\r\n");
 		/* Still mark as started - socket ops will fail with clear errors */
 	}
 
@@ -249,18 +249,18 @@ void NetListenerStart(void)
 {
 	if (!NetworkStarted)
 	{
-		dbgprintf("TPGZ NET: can't start listener, network not ready\r\n");
+		dbgprintf("UMBRA NET: can't start listener, network not ready\r\n");
 		return;
 	}
 
 	u32 *stack = (u32*)heap_alloc_aligned(0, 0x1000, 32);
 	if (!stack)
 	{
-		dbgprintf("TPGZ NET: failed to alloc listener stack\r\n");
+		dbgprintf("UMBRA NET: failed to alloc listener stack\r\n");
 		return;
 	}
 
 	u32 tid = thread_create(NetListenerThread, NULL, stack, 0x1000 / sizeof(u32), 0x78, 1);
 	thread_continue(tid);
-	dbgprintf("TPGZ NET: listener thread started (tid=%u)\r\n", tid);
+	dbgprintf("UMBRA NET: listener thread started (tid=%u)\r\n", tid);
 }

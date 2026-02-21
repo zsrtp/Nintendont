@@ -342,6 +342,8 @@ static inline void sync_after_write_align32(void *Buf, u32 Len)
 }
 
 #define RESET_STATUS 0x13003420
+#define UMBRA_SIGNATURE 0x13003430  /* Inside RESET_STATUS clear range */
+#define UMBRA_SIGNATURE_MAGIC 0x554D4252 /* "UMBR" */
 
 /**
  * Is this system a Wii U?
