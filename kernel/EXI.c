@@ -743,6 +743,8 @@ void EXIUpdateRegistersNEW( void )
 					}
 
 					EXICommand[chn] = 0;
+					if (chn == 0)
+						umbra_pending_read = 0;
 				}
 
 				write32( EXI_CMD_1, ret );
