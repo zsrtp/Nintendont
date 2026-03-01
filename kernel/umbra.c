@@ -1,21 +1,14 @@
-// Nintendont (kernel): Custom EXI device for UMBRA.
-// Handles settings persistence, one-shot network sends, and persistent
-// UDP game-state streaming (connect/disconnect/state_write/state_read).
-// Dispatched from EXI.c MEMCARD_A handler when "GZ" magic is detected.
-
 #include "umbra.h"
 #include "EXI.h"
 #include "net.h"
+#include "gdb.h"
 #include "debug.h"
 #include "ff_utf8.h"
 #include "string.h"
 
 #define UMBRA_SETTINGS_PATH "/saves/umbracfg.bin"
 
-/* Max payload that fits in a single UDP datagram without fragmentation */
 #define UMBRA_STATE_BUF_SIZE 1400
-
-/* ── General state ─────────────────────────────────────────────────── */
 
 static u32 umbra_cmd = 0;
 static u32 umbra_last_status = 0;
@@ -25,22 +18,16 @@ static u16 umbra_connect_port = 0;
 static s32 umbra_join_res = 0;
 u32 umbra_pending_read = 0;
 
-/* ── Persistent online socket state ────────────────────────────────── */
-
 static s32 umbra_online_sock = -1;
 static volatile u32 umbra_online_active = 0;
 
-/* Outgoing state buffer (game writes via STATE_WRITE, sender thread reads) */
 static u8 umbra_out_buf[UMBRA_STATE_BUF_SIZE] ALIGNED(32);
 static volatile u32 umbra_out_len = 0;
 static volatile u32 umbra_out_ready = 0;
 
-/* Incoming state buffer (receiver thread writes, game reads via STATE_READ) */
 static u8 umbra_in_buf[UMBRA_STATE_BUF_SIZE] ALIGNED(32);
 static volatile u32 umbra_in_len = 0;
 static volatile u32 umbra_in_ready = 0;
-
-/* ── Settings persistence ──────────────────────────────────────────── */
 
 static u32 umbra_write_settings(const u8 *data, u32 len)
 {
@@ -114,8 +101,6 @@ static u32 umbra_delete_settings(void)
 	return UMBRA_STATUS_OK;
 }
 
-/* ── One-shot UDP send (legacy CMD_NET_SEND) ───────────────────────── */
-
 static u32 umbra_net_send_udp(const u8 *data, u32 len)
 {
 	if (!NetworkStarted)
@@ -182,8 +167,6 @@ static u32 umbra_net_send_udp(const u8 *data, u32 len)
 	return UMBRA_STATUS_OK;
 }
 
-/* ── Persistent online: sender thread ──────────────────────────────── */
-
 static u32 umbra_sender_thread(void *arg)
 {
 	/* No dbgprintf in threads — FatFS is not thread-safe */
@@ -201,8 +184,6 @@ static u32 umbra_sender_thread(void *arg)
 
 	return 0;
 }
-
-/* ── Persistent online: receiver thread ────────────────────────────── */
 
 static u32 umbra_receiver_thread(void *arg)
 {
@@ -231,8 +212,6 @@ static u32 umbra_receiver_thread(void *arg)
 
 	return 0;
 }
-
-/* ── NET_CONNECT: open persistent socket + start threads ───────────── */
 
 static u32 umbra_net_connect(const u8 *data, u32 len)
 {
@@ -266,7 +245,6 @@ static u32 umbra_net_connect(const u8 *data, u32 len)
 		(ip_addr >> 8) & 0xFF, ip_addr & 0xFF,
 		port);
 
-	/* Create UDP socket */
 	s32 sock = net_socket(top_fd, AF_INET, SOCK_DGRAM, IPPROTO_IP);
 	if (sock < 0)
 	{
@@ -275,7 +253,6 @@ static u32 umbra_net_connect(const u8 *data, u32 len)
 		return UMBRA_STATUS_NET_SOCK_FAIL;
 	}
 
-	/* Connect socket to server — sets default destination, OS assigns local port */
 	STACK_ALIGN(struct sockaddr_in, dest, 1, 32);
 	memset(dest, 0, sizeof(struct sockaddr_in));
 	dest->sin_len    = 8;
@@ -292,28 +269,25 @@ static u32 umbra_net_connect(const u8 *data, u32 len)
 		return UMBRA_STATUS_NET_CONN_FAIL;
 	}
 
-	/* Send an initial JOIN packet so the server learns our address.
-	 * Format: [player_id=0][msg_type=0x02 JOIN][len=0][no payload] */
+	/* JOIN packet so the server learns our address */
 	{
 		u8 join_pkt[4] ALIGNED(32);
-		join_pkt[0] = 0;    /* player_id (assigned by server) */
-		join_pkt[1] = 0x02; /* MSG_JOIN */
-		join_pkt[2] = 0;    /* payload len high */
-		join_pkt[3] = 0;    /* payload len low */
+		join_pkt[0] = 0;
+		join_pkt[1] = 0x02;
+		join_pkt[2] = 0;
+		join_pkt[3] = 0;
 		umbra_join_res = net_sendto(top_fd, sock, join_pkt, 4, 0);
 		dbgprintf("UMBRA ONLINE: JOIN sendto = %d\r\n", umbra_join_res);
 	}
 
 	umbra_online_sock = sock;
 
-	/* Reset buffers */
 	umbra_out_len = 0;
 	umbra_out_ready = 0;
 	umbra_in_len = 0;
 	umbra_in_ready = 0;
 	umbra_online_active = 1;
 
-	/* Spawn sender thread */
 	u32 *send_stack = (u32*)heap_alloc_aligned(0, 0x1000, 32);
 	if (send_stack)
 	{
@@ -323,7 +297,6 @@ static u32 umbra_net_connect(const u8 *data, u32 len)
 		dbgprintf("UMBRA ONLINE: sender tid=%u\r\n", tid);
 	}
 
-	/* Spawn receiver thread */
 	u32 *recv_stack = (u32*)heap_alloc_aligned(0, 0x1000, 32);
 	if (recv_stack)
 	{
@@ -337,8 +310,6 @@ static u32 umbra_net_connect(const u8 *data, u32 len)
 	return UMBRA_STATUS_OK;
 }
 
-/* ── NET_DISCONNECT: tear down persistent socket ───────────────────── */
-
 static u32 umbra_net_disconnect(void)
 {
 	if (umbra_online_sock < 0)
@@ -349,14 +320,12 @@ static u32 umbra_net_disconnect(void)
 
 	dbgprintf("UMBRA ONLINE: disconnecting\r\n");
 
-	/* Signal threads to stop */
 	umbra_online_active = 0;
 
-	/* Send LEAVE packet */
 	{
 		u8 leave_pkt[4] ALIGNED(32);
-		leave_pkt[0] = 0;    /* player_id */
-		leave_pkt[1] = 0x03; /* MSG_LEAVE */
+		leave_pkt[0] = 0;
+		leave_pkt[1] = 0x03;
 		leave_pkt[2] = 0;
 		leave_pkt[3] = 0;
 		net_sendto(top_fd, umbra_online_sock, leave_pkt, 4, 0);
@@ -366,14 +335,11 @@ static u32 umbra_net_disconnect(void)
 	net_close(top_fd, umbra_online_sock);
 	umbra_online_sock = -1;
 
-	/* Give threads a moment to notice and exit */
 	mdelay(20);
 
 	dbgprintf("UMBRA ONLINE: disconnected\r\n");
 	return UMBRA_STATUS_OK;
 }
-
-/* ── NET_STATE_WRITE: copy outgoing state into send buffer ─────────── */
 
 static u32 umbra_net_state_write(const u8 *data, u32 len)
 {
@@ -390,8 +356,6 @@ static u32 umbra_net_state_write(const u8 *data, u32 len)
 	return UMBRA_STATUS_OK;
 }
 
-/* ── EXI dispatch ──────────────────────────────────────────────────── */
-
 void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 {
 	sync_before_read(Data, Length);
@@ -404,7 +368,6 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 
 		if (cmd == UMBRA_CMD_NET_SEND)
 		{
-			/* Legacy one-shot send: large DMA with IP/port/payload */
 			umbra_cmd = cmd;
 			umbra_pending_read = 1;
 			dbgprintf("UMBRA: net_send len=%u\r\n", Length);
@@ -412,7 +375,6 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 		}
 		else if (cmd == UMBRA_CMD_NET_CONNECT)
 		{
-			/* Persistent connect: [4B cmd][4B ip][2B port][2B pad] */
 			umbra_cmd = cmd;
 			umbra_pending_read = 1;
 			dbgprintf("UMBRA: net_connect len=%u\r\n", Length);
@@ -420,27 +382,33 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 		}
 		else if (cmd == UMBRA_CMD_NET_STATE_WRITE)
 		{
-			/* State write: [4B cmd][payload...] */
 			umbra_cmd = cmd;
 			umbra_pending_read = 1;
 			umbra_last_status = umbra_net_state_write(Data + 4, Length - 4);
 		}
 		else if (cmd == UMBRA_CMD_NET_DISCONNECT)
 		{
-			/* Disconnect: command-only */
 			umbra_cmd = cmd;
 			umbra_pending_read = 1;
 			umbra_last_status = umbra_net_disconnect();
 		}
+		else if (cmd == UMBRA_CMD_GDB_START)
+		{
+			umbra_cmd = cmd;
+			umbra_pending_read = 1;
+			u16 port = (Data[4] << 8) | Data[5];
+			dbgprintf("UMBRA: gdb_start port=%u\r\n", port);
+			s32 gdb_err = gdb_start(port);
+			dbgprintf("UMBRA: gdb_start result=%d\r\n", gdb_err);
+			umbra_last_status = (gdb_err == 0) ? UMBRA_STATUS_OK : UMBRA_STATUS_NET_ERR;
+		}
 		else if (cmd == UMBRA_CMD_NET_STATE_READ || cmd == UMBRA_CMD_NET_RECV)
 		{
-			/* Read commands: just set up for the DMA read phase */
 			umbra_cmd = cmd;
 			umbra_pending_read = 1;
 		}
 		else if (Length <= 32)
 		{
-			/* Short DMA = command-only (delete, or command setup for read) */
 			umbra_cmd = cmd;
 			umbra_pending_read = 1;
 			dbgprintf("UMBRA: cmd=0x%02X\r\n", umbra_cmd);
@@ -452,7 +420,6 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 		}
 		else
 		{
-			/* Large DMA = command + payload (write settings) */
 			umbra_cmd = cmd;
 			umbra_pending_read = 1;
 			dbgprintf("UMBRA: write cmd=0x%02X len=%u\r\n", umbra_cmd, Length);
@@ -465,7 +432,6 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 	}
 	else
 	{
-		/* EXI_READ (DMA read) */
 		dbgprintf("UMBRA: read cmd=0x%02X len=%u\r\n", umbra_cmd, Length);
 
 		if (umbra_cmd == UMBRA_CMD_READ)
@@ -474,7 +440,6 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 		}
 		else if (umbra_cmd == UMBRA_CMD_NET_SEND)
 		{
-			/* Return status + diagnostic info to PPC */
 			memset(Data, 0, Length);
 			*(u32*)(Data + 0)  = umbra_last_status;
 			*(s32*)(Data + 4)  = top_fd;
@@ -485,7 +450,6 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 		}
 		else if (umbra_cmd == UMBRA_CMD_NET_RECV)
 		{
-			/* Legacy recv: return data from listener thread */
 			memset(Data, 0, Length);
 			if (net_recv_ready)
 			{
@@ -508,14 +472,12 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 			 umbra_cmd == UMBRA_CMD_NET_DISCONNECT ||
 			 umbra_cmd == UMBRA_CMD_NET_STATE_WRITE)
 		{
-			/* Return [4B status] */
 			memset(Data, 0, Length);
 			*(u32*)(Data + 0) = umbra_last_status;
 			sync_after_write(Data, Length);
 		}
 		else if (umbra_cmd == UMBRA_CMD_NET_STATE_READ)
 		{
-			/* Return [4B status][4B len][data...] from receiver buffer */
 			memset(Data, 0, Length);
 			if (umbra_online_sock < 0)
 			{
@@ -538,9 +500,41 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 			}
 			sync_after_write(Data, Length);
 		}
+		else if (umbra_cmd == UMBRA_CMD_GDB_START)
+		{
+			/* Read live values from SHM, not cached debug vars */
+			{
+				u32 live_hb, live_seen, live_halt, live_state;
+				sync_before_read((void*)GDB_SHM_ADDR_ARM, GDB_SHM_SIZE);
+				live_hb   = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_PPC_HEARTBEAT);
+				live_seen = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_PPC_HALT_SEEN);
+				live_halt = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_HALT_REQ);
+				live_state = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_STATE);
+
+				memset(Data, 0, Length);
+				*(u32*)(Data + 0) = umbra_last_status;
+				if (Length >= 40)
+				{
+					*(u32*)(Data + 4) = gdb_dbg_state;
+					*(s32*)(Data + 8) = gdb_dbg_err;
+					*(u32*)(Data + 12) = gdb_dbg_polls;
+					*(s32*)(Data + 16) = gdb_dbg_last_poll;
+					*(u32*)(Data + 20) = live_hb;
+					*(u32*)(Data + 24) = live_seen;
+					*(u32*)(Data + 28) = live_halt;
+					*(s32*)(Data + 32) = gdb_dbg_client_err;
+					*(u32*)(Data + 36) = gdb_dbg_client_polls;
+				}
+				sync_after_write(Data, Length);
+				dbgprintf("UMBRA: gdb_dbg st=%u err=%d polls=%u lpoll=%d hb=%u seen=%u halt=%u state=%u cerr=%d cpolls=%u cmds=0x%08X\r\n",
+					gdb_dbg_state, gdb_dbg_err, gdb_dbg_polls, gdb_dbg_last_poll,
+					live_hb, live_seen, live_halt, live_state,
+					gdb_dbg_client_err, gdb_dbg_client_polls,
+					gdb_dbg_shm_halt);
+			}
+		}
 		else if (umbra_cmd == UMBRA_CMD_WRITE || umbra_cmd == UMBRA_CMD_DELETE)
 		{
-			/* Return operation status to PPC */
 			memset(Data, 0, Length);
 			*(u32*)Data = umbra_last_status;
 			sync_after_write(Data, Length);

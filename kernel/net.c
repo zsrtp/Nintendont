@@ -1,20 +1,13 @@
-/* kernel/net.c
- * IOS socket wrappers for UMBRA networking.
- * Based on Slippi Nintendont and libogc network_wii.c.
- */
-
 #include "global.h"
 #include "common.h"
 #include "string.h"
 #include "debug.h"
 #include "net.h"
 
-/* Cached fd for /dev/net/ip/top. */
 s32 top_fd ALIGNED(32) = -1;
 u32 NetworkStarted = 0;
 s32 net_init_err ALIGNED(32) = 0;
 
-/* Shared receive buffer for listener thread */
 volatile u32 net_recv_ready = 0;
 volatile u32 net_recv_len = 0;
 u8 net_recv_buf[NET_RECV_BUF_SIZE] ALIGNED(32);
@@ -58,7 +51,6 @@ int NCDInit(void)
 		dbgprintf("UMBRA NET: failed to open kd: %d\r\n", kd_fd);
 	}
 
-	/* Open socket driver */
 	top_fd = IOS_Open(top_name, 0);
 	dbgprintf("UMBRA NET: top_fd: %d\r\n", top_fd);
 	if (top_fd < 0)
@@ -70,7 +62,6 @@ int NCDInit(void)
 	res = IOS_Ioctl(top_fd, IOCTL_SO_STARTUP, 0, 0, 0, 0);
 	dbgprintf("UMBRA NET: SO_STARTUP: %d\r\n", res);
 
-	/* Wait for the network interface to come up (poll for valid IP) */
 	u32 ip = 0;
 	for (i = 0; i < 10; i++)
 	{
@@ -159,6 +150,9 @@ s32 net_sendto(s32 fd, s32 socket, void *data, s32 len, u32 flags)
 	vec[1].data = params;
 	vec[1].len = sizeof(struct sendto_params);
 
+	sync_after_write(message_buf, len);
+	sync_after_write(params, sizeof(struct sendto_params));
+
 	s32 res = IOS_Ioctlv(fd, IOCTLV_SO_SENDTO, 2, 0, vec);
 
 	heap_free(0, message_buf);
@@ -204,7 +198,105 @@ s32 net_recvfrom(s32 fd, s32 socket, void *mem, s32 len, u32 flags)
 	vec[2].data = NULL;
 	vec[2].len = 0;
 
-	return IOS_Ioctlv(fd, IOCTLV_SO_RECVFROM, 2, 0, vec);
+	sync_after_write(params, 8);
+
+	/* 1 input, 2 outputs (data buf, src addr) */
+	s32 ret = IOS_Ioctlv(fd, IOCTLV_SO_RECVFROM, 1, 2, vec);
+
+	if (ret > 0)
+		sync_before_read(mem, ret);
+
+	return ret;
+}
+
+s32 net_listen(s32 fd, s32 socket, u32 backlog)
+{
+	STACK_ALIGN(u32, params, 2, 32);
+
+	if (fd < 0) return -62;
+
+	params[0] = socket;
+	params[1] = backlog;
+
+	return IOS_Ioctl(fd, IOCTL_SO_LISTEN, params, 8, 0, 0);
+}
+
+s32 net_accept(s32 fd, s32 socket)
+{
+	STACK_ALIGN(u32, params, 1, 32);
+	STACK_ALIGN(struct sockaddr, addr, 1, 32);
+
+	if (fd < 0) return -62;
+
+	*params = socket;
+	addr->sa_len = 8;
+	addr->sa_family = AF_INET;
+
+	return IOS_Ioctl(fd, IOCTL_SO_ACCEPT, params, 4, addr, 8);
+}
+
+s32 net_poll(s32 fd, struct pollsd *sds, u32 nsds, s32 timeout)
+{
+	STACK_ALIGN(u64, params, 1, 32);
+
+	if (fd < 0) return -62;
+
+	u32 sz = nsds * sizeof(struct pollsd);
+	struct pollsd *aligned = (struct pollsd*)heap_alloc_aligned(0, sz, 32);
+	if (!aligned)
+		return -1;
+
+	memcpy(aligned, sds, sz);
+
+	/* IOS expects 8 bytes: first 4 unused, second 4 = timeout */
+	union ullc outv;
+	outv.ul[0] = 0;
+	outv.ul[1] = timeout;
+	params[0] = outv.ull;
+
+	sync_after_write(params, 8);
+	sync_after_write(aligned, sz);
+
+	s32 res = IOS_Ioctl(fd, IOCTL_SO_POLL, params, 8, aligned, sz);
+
+	sync_before_read(aligned, sz);
+	memcpy(sds, aligned, sz);
+	heap_free(0, aligned);
+
+	return res;
+}
+
+s32 net_setsockopt(s32 fd, s32 socket, u32 level, u32 optname,
+		   void *optval, u32 optlen)
+{
+	STACK_ALIGN(struct setsockopt_params, params, 1, 32);
+
+	if (fd < 0) return -62;
+
+	memset(params, 0, sizeof(struct setsockopt_params));
+	params->socket = socket;
+	params->level = level;
+	params->optname = optname;
+	params->optlen = optlen;
+
+	if (optval && optlen)
+		memcpy(params->optval, optval, optlen);
+
+	return IOS_Ioctl(fd, IOCTL_SO_SETSOCKOPT, params,
+			 sizeof(struct setsockopt_params), NULL, 0);
+}
+
+s32 net_fcntl(s32 fd, s32 socket, u32 cmd, u32 arg)
+{
+	STACK_ALIGN(u32, params, 3, 32);
+
+	if (fd < 0) return -62;
+
+	params[0] = socket;
+	params[1] = cmd;
+	params[2] = arg;
+
+	return IOS_Ioctl(fd, IOCTL_SO_FCNTL, params, 12, 0, 0);
 }
 
 static u32 NetListenerThread(void *arg)
@@ -222,9 +314,22 @@ static u32 NetListenerThread(void *arg)
 		return 1;
 	}
 
+	/* Use poll (IOS_Ioctl) + recv (IOS_Ioctlv) instead of blocking recv.
+	 * A blocking IOS_Ioctlv holds the IOS network module's single
+	 * processing slot, preventing ALL other Ioctlv calls (including
+	 * TCP recv/send from other threads like GDB). */
 	u8 tmp[NET_RECV_BUF_SIZE];
+	struct pollsd psd;
 	while (1)
 	{
+		psd.socket = sock;
+		psd.events = POLLIN;
+		psd.revents = 0;
+
+		s32 pr = net_poll(top_fd, &psd, 1, 100);
+		if (pr <= 0 || !(psd.revents & POLLIN))
+			continue;
+
 		s32 n = net_recvfrom(top_fd, sock, tmp, NET_RECV_BUF_SIZE, 0);
 		if (n > 0)
 		{
@@ -233,12 +338,10 @@ static u32 NetListenerThread(void *arg)
 			memcpy((void*)net_recv_buf, tmp, n);
 			net_recv_len = n;
 			net_recv_ready = 1;
-			/* no dbgprintf — FatFS not thread-safe */
 		}
 		else if (n < 0)
 		{
-			/* no dbgprintf — FatFS not thread-safe */
-			mdelay(1000);
+			mdelay(100);
 		}
 	}
 

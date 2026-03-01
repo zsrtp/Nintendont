@@ -15,8 +15,9 @@
 #define UMBRA_CMD_NET_STATE_WRITE  0x07
 #define UMBRA_CMD_NET_STATE_READ   0x08
 #define UMBRA_CMD_NET_DISCONNECT   0x09
+#define UMBRA_CMD_GDB_START        0x0A
+#define UMBRA_CMD_GDB_ARM_CRASH   0x0B
 
-/* Status codes returned to PPC */
 #define UMBRA_STATUS_OK              0x00
 #define UMBRA_STATUS_NOT_FOUND       0x01
 #define UMBRA_STATUS_WRITE_ERR       0x02
@@ -30,7 +31,6 @@
 
 void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode);
 
-/* Non-zero when an umbra DMA read is expected next. */
 extern u32 umbra_pending_read;
 
 #endif

@@ -7,6 +7,11 @@
 
 #define IPPROTO_IP	0
 #define IPPROTO_TCP	6
+#define TCP_NODELAY	0x2001
+
+#define F_GETFL		3
+#define F_SETFL		4
+#define IOS_O_NONBLOCK	0x04
 
 #define SOCK_STREAM	1
 #define SOCK_DGRAM	2
@@ -81,6 +86,19 @@ struct sendto_params {
 	u8 destaddr[28];
 };
 
+union ullc {
+	u64 ull;
+	u32 ul[2];
+};
+
+struct setsockopt_params {
+	u32 socket;
+	u32 level;
+	u32 optname;
+	u32 optlen;
+	u8 optval[20];
+};
+
 extern s32 top_fd;
 extern u32 NetworkStarted;
 extern s32 net_init_err;
@@ -92,6 +110,18 @@ extern u8 net_recv_buf[];
 #define NET_LISTEN_PORT 52224
 #define NET_RECV_BUF_SIZE 1400
 
+#define POLLIN   0x0001
+#define POLLOUT  0x0004
+#define POLLERR  0x0008
+#define POLLHUP  0x0010
+#define POLLNVAL 0x0020
+
+struct pollsd {
+	s32 socket;
+	u32 events;
+	u32 revents;
+};
+
 int NCDInit(void);
 void NetListenerStart(void);
 s32 net_socket(s32 fd, u32 domain, u32 type, u32 protocol);
@@ -100,5 +130,11 @@ s32 net_bind(s32 fd, s32 socket, u32 addr, u16 port);
 s32 net_connect(s32 fd, s32 socket, struct sockaddr *name);
 s32 net_sendto(s32 fd, s32 socket, void *data, s32 len, u32 flags);
 s32 net_recvfrom(s32 fd, s32 socket, void *mem, s32 len, u32 flags);
+s32 net_listen(s32 fd, s32 socket, u32 backlog);
+s32 net_accept(s32 fd, s32 socket);
+s32 net_poll(s32 fd, struct pollsd *sds, u32 nsds, s32 timeout);
+s32 net_setsockopt(s32 fd, s32 socket, u32 level, u32 optname,
+		   void *optval, u32 optlen);
+s32 net_fcntl(s32 fd, s32 socket, u32 cmd, u32 arg);
 
 #endif
