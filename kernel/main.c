@@ -259,7 +259,6 @@ int _main( int argc, char *argv[] )
 	PatchInit();
 
 	NCDInit();
-	NetListenerStart();
 	SOCKInit();
 //Tell PPC side we are ready!
 	cc_ahbMemFlush(1);

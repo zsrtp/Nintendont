@@ -502,36 +502,9 @@ void EXIDeviceUmbra(u8 *Data, u32 Length, u32 Mode)
 		}
 		else if (umbra_cmd == UMBRA_CMD_GDB_START)
 		{
-			/* Read live values from SHM, not cached debug vars */
-			{
-				u32 live_hb, live_seen, live_halt, live_state;
-				sync_before_read((void*)GDB_SHM_ADDR_ARM, GDB_SHM_SIZE);
-				live_hb   = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_PPC_HEARTBEAT);
-				live_seen = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_PPC_HALT_SEEN);
-				live_halt = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_HALT_REQ);
-				live_state = read32(GDB_SHM_ADDR_ARM + GDB_SHM_OFF_STATE);
-
-				memset(Data, 0, Length);
-				*(u32*)(Data + 0) = umbra_last_status;
-				if (Length >= 40)
-				{
-					*(u32*)(Data + 4) = gdb_dbg_state;
-					*(s32*)(Data + 8) = gdb_dbg_err;
-					*(u32*)(Data + 12) = gdb_dbg_polls;
-					*(s32*)(Data + 16) = gdb_dbg_last_poll;
-					*(u32*)(Data + 20) = live_hb;
-					*(u32*)(Data + 24) = live_seen;
-					*(u32*)(Data + 28) = live_halt;
-					*(s32*)(Data + 32) = gdb_dbg_client_err;
-					*(u32*)(Data + 36) = gdb_dbg_client_polls;
-				}
-				sync_after_write(Data, Length);
-				dbgprintf("UMBRA: gdb_dbg st=%u err=%d polls=%u lpoll=%d hb=%u seen=%u halt=%u state=%u cerr=%d cpolls=%u cmds=0x%08X\r\n",
-					gdb_dbg_state, gdb_dbg_err, gdb_dbg_polls, gdb_dbg_last_poll,
-					live_hb, live_seen, live_halt, live_state,
-					gdb_dbg_client_err, gdb_dbg_client_polls,
-					gdb_dbg_shm_halt);
-			}
+			memset(Data, 0, Length);
+			*(u32*)Data = umbra_last_status;
+			sync_after_write(Data, Length);
 		}
 		else if (umbra_cmd == UMBRA_CMD_WRITE || umbra_cmd == UMBRA_CMD_DELETE)
 		{

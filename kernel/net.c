@@ -15,16 +15,16 @@ u8 net_recv_buf[NET_RECV_BUF_SIZE] ALIGNED(32);
 static const char kd_name[19] ALIGNED(32) = "/dev/net/kd/request";
 static const char top_name[15] ALIGNED(32) = "/dev/net/ip/top";
 
-int NCDInit(void)
+static u32 NetListenerThread(void *arg);
+
+static u32 NCDInitThread(void *arg)
 {
+	/* No dbgprintf in threads — FatFS is not thread-safe */
 	s32 res;
 	int i;
 
-	dbgprintf("UMBRA NET: NCDInit()\r\n");
-
 	/* NWC24 startup - required to bring up the WiFi interface */
 	s32 kd_fd = IOS_Open(kd_name, 0);
-	dbgprintf("UMBRA NET: kd_fd: %d\r\n", kd_fd);
 	if (kd_fd >= 0)
 	{
 		void *nwc_buf = heap_alloc_aligned(0, 32, 32);
@@ -33,11 +33,9 @@ int NCDInit(void)
 		/* Retry NWC24 startup - it can return -29 while initializing */
 		for (i = 0; i < 5; i++)
 		{
-			res = IOS_Ioctl(kd_fd, IOCTL_NWC24_STARTUP, 0, 0, nwc_buf, 32);
-			dbgprintf("UMBRA NET: NWC24_STARTUP[%d]: %d\r\n", i, res);
+			IOS_Ioctl(kd_fd, IOCTL_NWC24_STARTUP, 0, 0, nwc_buf, 32);
 			s32 nwc_res;
 			memcpy(&nwc_res, nwc_buf, sizeof(s32));
-			dbgprintf("UMBRA NET: NWC24 result: %d\r\n", nwc_res);
 			if (nwc_res != -29)
 				break;
 			mdelay(200);
@@ -46,44 +44,57 @@ int NCDInit(void)
 		IOS_Close(kd_fd);
 		heap_free(0, nwc_buf);
 	}
-	else
-	{
-		dbgprintf("UMBRA NET: failed to open kd: %d\r\n", kd_fd);
-	}
 
 	top_fd = IOS_Open(top_name, 0);
-	dbgprintf("UMBRA NET: top_fd: %d\r\n", top_fd);
 	if (top_fd < 0)
 	{
 		net_init_err = top_fd;
-		return -1;
+		return 1;
 	}
 
 	res = IOS_Ioctl(top_fd, IOCTL_SO_STARTUP, 0, 0, 0, 0);
-	dbgprintf("UMBRA NET: SO_STARTUP: %d\r\n", res);
+	(void)res;
 
 	u32 ip = 0;
 	for (i = 0; i < 10; i++)
 	{
 		ip = IOS_Ioctl(top_fd, IOCTL_SO_GETHOSTID, 0, 0, 0, 0);
-		dbgprintf("UMBRA NET: GETHOSTID[%d]: 0x%08x\r\n", i, ip);
 		if (ip != 0)
 			break;
 		mdelay(500);
 	}
 
-	dbgprintf("UMBRA NET: IP: %d.%d.%d.%d\r\n",
-		(ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
-		(ip >> 8) & 0xFF, ip & 0xFF);
-
 	if (ip == 0)
-	{
 		net_init_err = -39;
-		dbgprintf("UMBRA NET: no IP after retries, WiFi not connected?\r\n");
-		/* Still mark as started - socket ops will fail with clear errors */
-	}
 
 	NetworkStarted = 1;
+
+	/* Start the UDP listener now that the network is ready */
+	u32 *listener_stack = (u32*)heap_alloc_aligned(0, 0x1000, 32);
+	if (listener_stack)
+	{
+		u32 tid = thread_create(NetListenerThread, NULL,
+					listener_stack, 0x1000 / sizeof(u32), 0x78, 1);
+		thread_continue(tid);
+	}
+
+	return 0;
+}
+
+int NCDInit(void)
+{
+	dbgprintf("UMBRA NET: NCDInit() starting background thread\r\n");
+
+	u32 *stack = (u32*)heap_alloc_aligned(0, 0x1000, 32);
+	if (!stack)
+	{
+		dbgprintf("UMBRA NET: failed to alloc NCDInit stack\r\n");
+		return -1;
+	}
+
+	u32 tid = thread_create(NCDInitThread, NULL, stack, 0x1000 / sizeof(u32), 0x78, 1);
+	thread_continue(tid);
+	dbgprintf("UMBRA NET: NCDInit thread started (tid=%u)\r\n", tid);
 	return 0;
 }
 

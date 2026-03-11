@@ -212,8 +212,8 @@ void Initialise(bool autoboot)
 			if (bg_isWidescreen)
 			{
 				// Clear the sides.
-				GRRLIB_Rectangle(0, 0, 80, 480, RGBA(222, 223, 224, i), true);
-				GRRLIB_Rectangle(80+480, 0, 80, 480, RGBA(222, 223, 224, i), true);
+				GRRLIB_Rectangle(0, 0, 80, 480, RGBA(33, 32, 31, i), true);
+				GRRLIB_Rectangle(80+480, 0, 80, 480, RGBA(33, 32, 31, i), true);
 			}
 			GRRLIB_DrawImg(bg_xPos, 0, background, 0, bg_xScale, 1, RGBA(255, 255, 255, i)); // Opacity increases as i does
 			GRRLIB_Render();
@@ -364,8 +364,8 @@ inline void ClearScreen()
 	if (bg_isWidescreen)
 	{
 		// Clear the sides.
-		GRRLIB_Rectangle(0, 0, 80, 480, RGBA(222, 223, 224, 255), true);
-		GRRLIB_Rectangle(80+480, 0, 80, 480, RGBA(222, 223, 224, 255), true);
+		GRRLIB_Rectangle(0, 0, 80, 480, RGBA(33, 32, 31, 255), true);
+		GRRLIB_Rectangle(80+480, 0, 80, 480, RGBA(33, 32, 31, 255), true);
 	}
 	GRRLIB_DrawImg(bg_xPos, 0, background, 0, bg_xScale, 1, RGBA(255, 255, 255, 255));
 }

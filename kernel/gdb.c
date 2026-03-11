@@ -5,7 +5,6 @@
 #include "ipc.h"
 #include "gdb.h"
 #include "syscalls.h"
-#include "debug.h"
 
 #define GDB_PKT_BUF_SIZE 4096
 #define GDB_MAX_BREAKPOINTS 32
@@ -238,8 +237,6 @@ static s32 gdb_client_sock = -1;
 static u8  tcp_rbuf[TCP_RECV_BUF_SIZE] ALIGNED(32);
 static int tcp_rbuf_pos = 0;
 static int tcp_rbuf_len = 0;
-static s32 tcp_last_err = 0;
-static s32 tcp_last_recv_n = 0;
 
 static void tcp_rbuf_reset(void)
 {
@@ -257,7 +254,7 @@ static int tcp_recv_byte(u8 *out)
 		psd.events = POLLIN;
 		psd.revents = 0;
 		s32 pr = net_poll(gdb_fd, &psd, 1, 100);
-		if (pr < 0) { tcp_last_err = pr; return -1; }
+		if (pr < 0) return -1;
 		if (pr == 0 || !(psd.revents & POLLIN))
 			return -2;
 		/* Inline recvfrom: no sync_before_read after DMA.
@@ -279,10 +276,9 @@ static int tcp_recv_byte(u8 *out)
 			s32 n = IOS_Ioctlv(gdb_fd, IOCTLV_SO_RECVFROM,
 					   1, 2, rvec);
 			if (n == IOS_EAGAIN) return -2;
-			if (n == 0) { tcp_last_err = 0; return -1; }
-			if (n < 0) { tcp_last_err = n; return -1; }
+			if (n == 0) return -1;
+			if (n < 0) return -1;
 			/* NO sync_before_read — data is in cache from IOS */
-			tcp_last_recv_n = n;
 			tcp_rbuf_pos = 0;
 			tcp_rbuf_len = n;
 		}
@@ -294,7 +290,6 @@ static int tcp_recv_byte(u8 *out)
 static int tcp_send(const void *data, int len)
 {
 	s32 res = net_sendto(gdb_fd, gdb_client_sock, (void *)data, len, 0);
-	gdb_dbg_client_err = res;
 	if (res < 0) return res;
 	return len;
 }
@@ -659,13 +654,9 @@ static void do_continue(void)
 			{
 				mdelay(1);
 				if (++step_wait > 3000)
-				{
-					gdb_dbg_shm_state = 0xDEAD0001; /* step-past timeout */
-					break;
-				}
+					break;  /* 3s timeout — avoid infinite hang */
 			}
-			gdb_dbg_client_polls = (u32)step_wait; /* track step-past duration */
-		}
+			}
 
 		write32(pa, PPC_TRAP_INSN);
 		sync_after_write((void*)pa, 4);
@@ -762,8 +753,6 @@ static int gdb_handle_command(const char *cmd, int len)
 			shm_write32(GDB_SHM_OFF_MAGIC, GDB_SHM_MAGIC);
 			shm_write32(GDB_SHM_OFF_HALT_REQ, 1);
 
-			u32 hb_before = shm_read32(GDB_SHM_OFF_PPC_HEARTBEAT);
-
 			int wait_ms = 0;
 			while (wait_ms < 3000)
 			{
@@ -773,16 +762,6 @@ static int gdb_handle_command(const char *cmd, int len)
 				if (qstate == GDB_STATE_STOPPED)
 					break;
 			}
-
-			u32 hb_after = shm_read32(GDB_SHM_OFF_PPC_HEARTBEAT);
-			u32 seen_after = shm_read32(GDB_SHM_OFF_PPC_HALT_SEEN);
-			u32 halt_after = shm_read32(GDB_SHM_OFF_HALT_REQ);
-			gdb_dbg_ppc_hb = hb_after;
-			gdb_dbg_ppc_seen = seen_after;
-			gdb_dbg_shm_halt = halt_after;
-			gdb_dbg_shm_state = qstate;
-			/* Store hb_before in an unused debug field for comparison */
-			gdb_dbg_last_poll = (s32)hb_before;
 
 			if (qstate != GDB_STATE_STOPPED)
 			{
@@ -1014,21 +993,8 @@ static int gdb_handle_command(const char *cmd, int len)
 static u16 gdb_port = 0;
 static volatile u32 gdb_running = 0;
 
-volatile u32 gdb_dbg_state = 0;
-volatile s32 gdb_dbg_err = 0;
-volatile u32 gdb_dbg_polls = 0;
-volatile s32 gdb_dbg_last_poll = 0;
-volatile u32 gdb_dbg_shm_halt = 0xDEAD;
-volatile u32 gdb_dbg_shm_state = 0xDEAD;
-volatile u32 gdb_dbg_ppc_hb = 0;
-volatile u32 gdb_dbg_ppc_seen = 0;
-volatile s32 gdb_dbg_client_err = 0;
-volatile u32 gdb_dbg_client_polls = 0;
-
 static u32 GDBServerThread(void *arg)
 {
-	gdb_dbg_state = 5;
-
 	while (gdb_running)
 	{
 		struct pollsd apsd;
@@ -1040,17 +1006,13 @@ static u32 GDBServerThread(void *arg)
 			continue;
 
 		s32 client = net_accept(gdb_fd, gdb_listen_sock);
-		gdb_dbg_polls++;
 
 		if (client < 0)
 		{
-			gdb_dbg_err = client;
 			mdelay(100);
 			continue;
 		}
 
-		gdb_dbg_state = 6;
-		gdb_dbg_last_poll = client;
 		gdb_client_sock = client;
 		tcp_rbuf_reset();
 		noack_mode = 0;
@@ -1065,28 +1027,18 @@ static u32 GDBServerThread(void *arg)
 		}
 
 		int detached = 0;
-		u32 cmd_history = 0;
-		gdb_dbg_err = 0;
-		gdb_dbg_client_polls = 0;
 		pending_ack = 0;
 		while (gdb_running && !detached)
 		{
 			int plen = gdb_recv_packet();
 			if (plen < 0)
-			{
-				gdb_dbg_err = tcp_last_err;
 				break; /* disconnect */
-			}
 			if (plen == 0)
 			{
 				mdelay(1);
 				continue;
 			}
 
-			gdb_dbg_client_polls++;
-			gdb_dbg_last_poll = (s32)pkt_buf[0];
-			cmd_history = (cmd_history << 8) | (u8)pkt_buf[0];
-			gdb_dbg_shm_halt = cmd_history;
 			int r = gdb_handle_command(pkt_buf, plen);
 			if (r == 1)
 			{
@@ -1101,7 +1053,6 @@ static u32 GDBServerThread(void *arg)
 			if (r == 2)
 			{
 				flush_pending_ack();
-				gdb_dbg_state = 7; /* in continue-wait */
 				while (gdb_running)
 				{
 					u32 state = shm_read32(GDB_SHM_OFF_STATE);
@@ -1110,7 +1061,6 @@ static u32 GDBServerThread(void *arg)
 						char reply[16];
 						make_stop_reply(reply);
 						gdb_send_str(reply);
-						gdb_dbg_state = 6; /* back to command loop */
 						break;
 					}
 
@@ -1120,8 +1070,6 @@ static u32 GDBServerThread(void *arg)
 					int wplen = gdb_recv_packet();
 					if (wplen < 0)
 					{
-						gdb_dbg_client_err = tcp_last_err;
-						gdb_dbg_state = 8; /* disconnected in wait */
 						detached = 1;
 						break;
 					}
@@ -1130,13 +1078,26 @@ static u32 GDBServerThread(void *arg)
 						shm_write32(GDB_SHM_OFF_MAGIC, GDB_SHM_MAGIC);
 						shm_write32(GDB_SHM_OFF_HALT_REQ, 1);
 					}
+					else if (wplen > 0 && pkt_buf[0] == 'D')
+					{
+						/* Clean detach during continue */
+						gdb_send_str("OK");
+						bp_remove_all();
+						shm_write32(GDB_SHM_OFF_STATE, GDB_STATE_DETACH);
+						detached = 1;
+						break;
+					}
+					else if (wplen > 0 && pkt_buf[0] == 'k')
+					{
+						/* Kill during continue */
+						bp_remove_all();
+						shm_write32(GDB_SHM_OFF_EXIT_REQ, 1);
+						shm_write32(GDB_SHM_OFF_STATE, GDB_STATE_DETACH);
+						detached = 1;
+						break;
+					}
 					else if (wplen > 0)
 					{
-						/* Unexpected packet during continue — in
-						 * all-stop mode GDB should only send Ctrl-C.
-						 * Send empty response so GDB knows the
-						 * command is unsupported rather than silently
-						 * eating the packet. */
 						gdb_send_str("");
 					}
 
@@ -1156,7 +1117,6 @@ static u32 GDBServerThread(void *arg)
 		shm_write32(GDB_SHM_OFF_STATE, GDB_STATE_DETACH);
 		shm_write32(GDB_SHM_OFF_HALT_REQ, 0);
 		shm_write32(GDB_SHM_OFF_MAGIC, 0);
-		gdb_dbg_state = 5;
 	}
 
 	shm_write32(GDB_SHM_OFF_MAGIC, 0);
@@ -1179,29 +1139,16 @@ s32 gdb_start(u16 port)
 	if (gdb_port == 0)
 		gdb_port = 2159;
 
-	gdb_dbg_state = 0;
-	gdb_dbg_err = 0;
-	gdb_dbg_polls = 0;
-	gdb_dbg_last_poll = 0;
-	gdb_dbg_shm_halt = 0xDEAD;
-	gdb_dbg_shm_state = 0xDEAD;
-	gdb_dbg_ppc_hb = 0xDEAD;
-	gdb_dbg_ppc_seen = 0xDEAD;
-	gdb_dbg_client_err = 0;
-	gdb_dbg_client_polls = 0;
-
 	/* Own fd to avoid IOS RM contention with UDP listener thread */
 	gdb_fd = IOS_Open(gdb_top_name, 0);
 	if (gdb_fd < 0)
 	{
-		gdb_dbg_err = gdb_fd;
 		return -6;
 	}
 
 	gdb_listen_sock = net_socket(gdb_fd, AF_INET, SOCK_STREAM, IPPROTO_IP);
 	if (gdb_listen_sock < 0)
 	{
-		gdb_dbg_err = gdb_listen_sock;
 		IOS_Close(gdb_fd);
 		gdb_fd = -1;
 		return -3;
@@ -1210,7 +1157,6 @@ s32 gdb_start(u16 port)
 	s32 res = net_bind(gdb_fd, gdb_listen_sock, INADDR_ANY, gdb_port);
 	if (res < 0)
 	{
-		gdb_dbg_err = res;
 		net_close(gdb_fd, gdb_listen_sock);
 		gdb_listen_sock = -1;
 		IOS_Close(gdb_fd);
@@ -1221,7 +1167,6 @@ s32 gdb_start(u16 port)
 	res = net_listen(gdb_fd, gdb_listen_sock, 1);
 	if (res < 0)
 	{
-		gdb_dbg_err = res;
 		net_close(gdb_fd, gdb_listen_sock);
 		gdb_listen_sock = -1;
 		IOS_Close(gdb_fd);

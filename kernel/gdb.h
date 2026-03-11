@@ -38,15 +38,4 @@
 
 s32 gdb_start(u16 port);
 
-extern volatile u32 gdb_dbg_state;
-extern volatile s32 gdb_dbg_err;
-extern volatile u32 gdb_dbg_polls;
-extern volatile s32 gdb_dbg_last_poll;
-extern volatile u32 gdb_dbg_shm_halt;
-extern volatile u32 gdb_dbg_shm_state;
-extern volatile u32 gdb_dbg_ppc_hb;
-extern volatile u32 gdb_dbg_ppc_seen;
-extern volatile s32 gdb_dbg_client_err;
-extern volatile u32 gdb_dbg_client_polls;
-
 #endif /* __GDB_H__ */

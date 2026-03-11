@@ -73,14 +73,14 @@ static void showProgress(unsigned int written, unsigned int total)
 		"Initializing virtual %u-block memory card...",
 		MEM_CARD_BLOCKS(ncfg->MemCardBlocks));
 	x = (640 - (len*10)) / 2;
-	PrintFormat(DEFAULT_SIZE, BLACK, x, 232-20, "%s", buf);
+	PrintFormat(DEFAULT_SIZE, WHITE, x, 232-20, "%s", buf);
 
 	// Second line.
 	len = snprintf(buf, sizeof(buf),
 		"%u of %u KiB written",
 		written / 1024, total / 1024);
 	x = (640 - (len*10)) / 2;
-	PrintFormat(DEFAULT_SIZE, BLACK, x, 232+20, "%s", buf);
+	PrintFormat(DEFAULT_SIZE, WHITE, x, 232+20, "%s", buf);
 
 	// Render the text.
 	GRRLIB_Render();
